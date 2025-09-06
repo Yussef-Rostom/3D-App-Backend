@@ -4,6 +4,7 @@ const connectToDatabase = require("./config/db");
 const dotenv = require("dotenv");
 const userRoutes = require("./routes/userRoutes");
 const productRoutes = require("./routes/productRouts");
+const cartRoutes = require("./routes/cartRouts");
 const { decodeToken } = require("./middlewares/auth");
 
 dotenv.config();
@@ -20,6 +21,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use("/api/users", userRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/cart", cartRoutes);
 
 
 app.listen(PORT, () => {
