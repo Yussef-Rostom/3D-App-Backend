@@ -82,46 +82,49 @@ const refreshToken = async (req, res) => {
         .status(400)
         .json({ status: "fail", message: "Refresh token is required" });
     }
+
     const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id);
+
     if (!user || user.refreshToken !== refreshToken) {
       return res
         .status(401)
         .json({ status: "fail", message: "Invalid refresh token" });
     }
+
     const newAccessToken = generateToken(user, "15m");
+    const newRefreshToken = generateToken(user, "7d");
+
+    user.refreshToken = newRefreshToken;
     await user.save();
+
     res.status(200).json({
       status: "success",
       message: "Token refreshed successfully",
-      data: { accessToken: newAccessToken },
-    });
-  } catch (err) {
-    res.status(500).json({
-      status: "fail",
-      message: err.message || "Internal server error",
-    });
-  }
-};
-
-const getProfile = async (req, res) => {
-  try {
-    res.status(200).json({
-      status: "success",
       data: {
-        user: {
-          name: req.user.name,
-          email: req.user.email,
-          role: req.user.role,
-        },
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
       },
     });
   } catch (err) {
-    res.status(500).json({
-      status: "fail",
-      message: err.message || "Internal server error",
-    });
+    res
+      .status(401)
+      .json({ status: "fail", message: "Invalid or expired refresh token" });
   }
+};
+
+const getProfile = (req, res) => {
+  res.status(200).json({
+    status: "success",
+    data: {
+      user: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role,
+      },
+    },
+  });
 };
 
 module.exports = {

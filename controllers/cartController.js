@@ -1,29 +1,38 @@
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
 
+const recalculateCart = (cart) => {
+  let totalPrice = 0;
+  for (const item of cart.items) {
+    totalPrice += item.price * item.quantity;
+  }
+  cart.totalPrice = totalPrice;
+  return cart;
+};
+
 const getCart = async (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
     const gestId = req.headers["gest-id"] || null;
 
-    let cart;
-    if (userId) {
-      cart = await Cart.findOne({ user: userId }).populate("items.product");
-    } else if (gestId) {
-      cart = await Cart.findOne({ gestId }).populate("items.product");
-    } else {
-      return res.status(400).json({
-        status: "fail",
-        message: "User ID or Guest ID is required",
-      });
+    if (!userId && !gestId) {
+      return res
+        .status(200)
+        .json({ status: "success", data: { items: [], totalPrice: 0 } });
     }
 
+    const query = userId ? { user: userId } : { gestId };
+    let cart = await Cart.findOne(query).populate("items.product");
+
     if (!cart) {
-      return res.status(200).json({
-        status: "success",
-        message: "Cart is emp",
-        data: { items: [] },
-      });
+      const newCartData = { items: [], totalPrice: 0 };
+      if (userId) newCartData.user = userId;
+      if (gestId) newCartData.gestId = gestId;
+
+      const newCart = new Cart(newCartData);
+      await newCart.save();
+
+      return res.status(200).json({ status: "success", data: newCart });
     }
 
     res.status(200).json({ status: "success", data: cart });
@@ -41,45 +50,32 @@ const addToCart = async (req, res) => {
     const gestId = req.headers["gest-id"] || null;
     const { productId, material, color, quantity } = req.body;
 
-    if (quantity <= 0) {
+    if (!userId && !gestId) {
+      return res
+        .status(400)
+        .json({ status: "fail", message: "User ID or Guest ID is required" });
+    }
+
+    if (!quantity || Number(quantity) <= 0) {
       return res.status(400).json({
         status: "fail",
-        message: "Quantity must be greater than 0",
+        message: "Quantity must be a positive number",
       });
     }
 
     const product = await Product.findById(productId);
-
-    if (!product) {
+    if (!product || !product.isPublished) {
       return res.status(404).json({
         status: "fail",
-        message: "Product not found",
+        message: "Product not found or not available",
       });
     }
 
-    if (!product.isPublished) {
-      return res.status(400).json({
-        status: "fail",
-        message: "Product is not available for sale",
-      });
-    }
+    const query = userId ? { user: userId } : { gestId };
+    let cart = await Cart.findOne(query);
 
-    let cart;
-    if (userId) {
-      cart = await Cart.findOne({ user: userId });
-      if (!cart) {
-        cart = new Cart({ user: userId, items: [] });
-      }
-    } else if (gestId) {
-      cart = await Cart.findOne({ gestId });
-      if (!cart) {
-        cart = new Cart({ gestId, items: [] });
-      }
-    } else {
-      return res.status(400).json({
-        status: "fail",
-        message: "User ID or Guest ID is required",
-      });
+    if (!cart) {
+      cart = new Cart(query);
     }
 
     const existingItemIndex = cart.items.findIndex(
@@ -92,14 +88,19 @@ const addToCart = async (req, res) => {
     if (existingItemIndex > -1) {
       cart.items[existingItemIndex].quantity += Number(quantity);
     } else {
-      cart.items.push({ product: productId, material, color, quantity });
+      cart.items.push({
+        product: productId,
+        material,
+        color,
+        quantity: Number(quantity),
+        price: product.price,
+      });
     }
 
-    cart.totalPrice += product.price * Number(quantity);
-
+    recalculateCart(cart);
     await cart.save();
-    const populatedCart = await cart.populate("items.product");
 
+    const populatedCart = await cart.populate("items.product");
     res.status(200).json({ status: "success", data: populatedCart });
   } catch (err) {
     res.status(500).json({
@@ -115,33 +116,27 @@ const updateCartItemQuantity = async (req, res) => {
     const gestId = req.headers["gest-id"] || null;
 
     if (!userId && !gestId) {
-      return res.status(400).json({
-        status: "fail",
-        message: "User ID or Guest ID is required",
-      });
-    }
-
-    let cart;
-    if (userId) {
-      cart = await Cart.findOne({ user: userId });
-    } else {
-      cart = await Cart.findOne({ gestId });
-    }
-
-    if (!cart) {
-      return res.status(400).json({
-        status: "fail",
-        message: "Cart not found",
-      });
+      return res
+        .status(400)
+        .json({ status: "fail", message: "User ID or Guest ID is required" });
     }
 
     const { productId, material, color, quantity } = req.body;
 
-    if (quantity === null || quantity < 0) {
+    if (quantity === null || Number(quantity) < 0) {
       return res.status(400).json({
         status: "fail",
-        message: "Quantity must be greater or equal than 0",
+        message: "Quantity must be a non-negative number",
       });
+    }
+
+    const query = userId ? { user: userId } : { gestId };
+    const cart = await Cart.findOne(query);
+
+    if (!cart) {
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Cart not found" });
     }
 
     const existingItemIndex = cart.items.findIndex(
@@ -152,39 +147,21 @@ const updateCartItemQuantity = async (req, res) => {
     );
 
     if (existingItemIndex <= -1) {
-      return res.status(404).json({
-        status: "fail",
-        message: "Item not found in cart",
-      });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Item not found in cart" });
     }
 
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({
-        status: "fail",
-        message: "Product not found",
-      });
-    }
-
-    if (cart.items[existingItemIndex].quantity <= 0) {
-      return res.status(400).json({
-        status: "fail",
-        message: "This item is not in your cart",
-      });
-    }
-
-    cart.totalPrice -= product.price * cart.items[existingItemIndex].quantity;
-
-    if (quantity > 0) {
+    if (Number(quantity) > 0) {
       cart.items[existingItemIndex].quantity = Number(quantity);
-      cart.totalPrice += product.price * Number(quantity);
     } else {
       cart.items.splice(existingItemIndex, 1);
     }
 
+    recalculateCart(cart);
     await cart.save();
-    const populatedCart = await cart.populate("items.product");
 
+    const populatedCart = await cart.populate("items.product");
     res.status(200).json({ status: "success", data: populatedCart });
   } catch (err) {
     res.status(500).json({
@@ -196,8 +173,47 @@ const updateCartItemQuantity = async (req, res) => {
 
 const deleteCartItem = async (req, res) => {
   try {
-    req.body.quantity = 0;
-    updateCartItemQuantity(req, res);
+    const userId = req.user ? req.user.id : null;
+    const gestId = req.headers["gest-id"] || null;
+
+    if (!userId && !gestId) {
+      return res
+        .status(400)
+        .json({ status: "fail", message: "User ID or Guest ID is required" });
+    }
+
+    const { productId, material, color } = req.body;
+
+    const query = userId ? { user: userId } : { gestId };
+    const cart = await Cart.findOne(query);
+
+    if (!cart) {
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Cart not found" });
+    }
+
+    const initialLength = cart.items.length;
+    cart.items = cart.items.filter(
+      (item) =>
+        !(
+          item.product.toString() === productId &&
+          item.material === material &&
+          item.color === color
+        )
+    );
+
+    if (cart.items.length === initialLength) {
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Item not found in cart to delete" });
+    }
+
+    recalculateCart(cart);
+    await cart.save();
+
+    const populatedCart = await cart.populate("items.product");
+    res.status(200).json({ status: "success", data: populatedCart });
   } catch (err) {
     res.status(500).json({
       status: "fail",
@@ -208,34 +224,29 @@ const deleteCartItem = async (req, res) => {
 
 const mergeCarts = async (req, res) => {
   try {
-    const userId = req.user ? req.user.id : null;
+    const userId = req.user.id;
     const gestId = req.headers["gest-id"] || null;
 
     if (!userId || !gestId) {
-      return res.status(400).json({
-        status: "fail",
-        message: "User ID and Guest ID is required",
-      });
+      return res
+        .status(400)
+        .json({ status: "fail", message: "User ID and Guest ID are required" });
     }
- 
-    const userCart = await Cart.findOne({ user: userId });
+
+    let userCart = await Cart.findOne({ user: userId });
     const guestCart = await Cart.findOne({ gestId });
 
     if (!guestCart) {
-      if (!userCart) {
-        newCart = new Cart({ user: userId, items: [] });
-        return res.status(200).json({
-          status: "success",
-          message: "No carts to merge",
-          data: { newCart },
-        });
-      }
-      return res.status(200).json({ status: "success", data: userCart });
+      return res.status(200).json({
+        status: "success",
+        message: "No guest cart to merge",
+        data: userCart,
+      });
     }
 
     if (!userCart) {
       guestCart.user = userId;
-      guestCart.gestId = null;
+      guestCart.gestId = undefined;
       await guestCart.save();
       return res.status(200).json({ status: "success", data: guestCart });
     }
@@ -249,24 +260,22 @@ const mergeCarts = async (req, res) => {
       );
 
       if (existingItemIndex > -1) {
-        userCart.items[existingItemIndex].quantity += Number(
-          guestItem.quantity
-        );
+        userCart.items[existingItemIndex].quantity += guestItem.quantity;
       } else {
         userCart.items.push(guestItem);
       }
     }
 
-    userCart.totalPrice += guestCart.totalPrice;
+    recalculateCart(userCart);
     await userCart.save();
-
     try {
       await Cart.findByIdAndDelete(guestCart._id);
     } catch (err) {
-      console.error("Failed to delete guest cart:", err);
+      console.error(err.message);
     }
 
-    res.status(200).json({ status: "success", data: userCart });
+    const populatedCart = await userCart.populate("items.product");
+    res.status(200).json({ status: "success", data: populatedCart });
   } catch (err) {
     res.status(500).json({
       status: "fail",
@@ -275,4 +284,10 @@ const mergeCarts = async (req, res) => {
   }
 };
 
-module.exports = { getCart, addToCart, updateCartItemQuantity, deleteCartItem, mergeCarts };
+module.exports = {
+  getCart,
+  addToCart,
+  updateCartItemQuantity,
+  deleteCartItem,
+  mergeCarts,
+};

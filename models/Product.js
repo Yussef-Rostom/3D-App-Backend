@@ -23,15 +23,11 @@ const productSchema = new mongoose.Schema(
         type: String,
       },
     ],
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
     tags: [{ type: String }],
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "Weight is required"],
+      required: [true, "user is required"],
     },
     dimensions: {
       length: {

@@ -1,46 +1,81 @@
 const Product = require("../models/Product");
 
-const getAllProducts = async (req, res) => {
-  try {
-    let query = {};
-    if (!req.user || req.user.role !== "admin") {
-      query.isPublished = true;
+class APIFeatures {
+  constructor(query, queryString) {
+    this.query = query;
+    this.queryString = queryString;
+  }
+
+  filter() {
+    let queryObj = { ...this.queryString };
+    const excludedFields = ["page", "sort", "limit", "search"];
+    excludedFields.forEach((el) => delete queryObj[el]);
+
+    if (!this.queryString.user || this.queryString.user.role !== "admin") {
+      queryObj.isPublished = true;
     }
-    if (req.query.category) {
-      query.category = req.query.category;
-    }
-    if (req.query.search) {
-      query.$or = [
-        { name: { $regex: req.query.search, $options: "i" } },
-        { description: { $regex: req.query.search, $options: "i" } },
-        { tags: { $regex: req.query.search, $options: "i" } },
+
+    if (this.queryString.search) {
+      queryObj.$or = [
+        { name: { $regex: this.queryString.search, $options: "i" } },
+        { description: { $regex: this.queryString.search, $options: "i" } },
+        { tags: { $regex: this.queryString.search, $options: "i" } },
       ];
     }
 
-    let sort = {};
-    if (req.query.sortBy) {
-      switch (req.query.sortBy) {
-        case "priceAsc":
-          sort = { price: 1 };
-          break;
-        case "priceDesc":
-          sort = { price: -1 };
-          break;
-        case "newest":
-          sort = { createdAt: -1 };
-          break;
-        case "popularity":
-          sort = { salesCount: -1 };
-          break;
-        default:
-          break;
-      }
-    }
+    this.query = this.query.find(queryObj);
+    return this;
+  }
 
-    const products = await Product.find(query)
-      .sort(sort)
-      .limit(req.query.limit || 0);
-    res.status(200).json({ status: "success", data: { products } });
+  sort() {
+    if (this.queryString.sortBy) {
+      const sortByMap = {
+        priceAsc: { price: 1 },
+        priceDesc: { price: -1 },
+        newest: { createdAt: -1 },
+        popularity: { salesCount: -1 },
+      };
+      this.query = this.query.sort(
+        sortByMap[this.queryString.sortBy] || { createdAt: -1 }
+      );
+    } else {
+      this.query = this.query.sort({ createdAt: -1 });
+    }
+    return this;
+  }
+
+  paginate() {
+    const page = this.queryString.page * 1 || 1;
+    const limit = this.queryString.limit * 1 || 0;
+    const skip = (page - 1) * limit;
+
+    this.query = this.query.skip(skip).limit(limit);
+    return this;
+  }
+}
+
+const getAllProducts = async (req, res) => {
+  try {
+    const features = new APIFeatures(Product.find(), {
+      ...req.query,
+      user: req.user,
+    })
+      .filter()
+      .sort()
+      .paginate();
+
+    const products = await features.query;
+
+    const totalProducts = await Product.countDocuments(
+      features.query.getFilter()
+    );
+
+    res.status(200).json({
+      status: "success",
+      results: products.length,
+      totalPages: Math.ceil(totalProducts / (req.query.limit * 1 || 10)),
+      data: { products },
+    });
   } catch (err) {
     res.status(500).json({
       status: "fail",
@@ -51,31 +86,13 @@ const getAllProducts = async (req, res) => {
 
 const createProduct = async (req, res) => {
   try {
-    const {
-      name,
-      description,
-      price,
-      category,
-      images,
-      tags,
-      dimensions,
-      weight,
-    } = req.body;
-
-    const product = new Product({
-      name,
-      description,
-      price,
-      category,
-      images,
-      tags,
-      dimensions,
-      weight,
+    const newProduct = new Product({
+      ...req.body,
       user: req.user.id,
     });
 
-    await product.save();
-    res.status(201).json({ status: "success", data: { product } });
+    await newProduct.save();
+    res.status(201).json({ status: "success", data: { product: newProduct } });
   } catch (err) {
     res.status(500).json({
       status: "fail",
@@ -94,7 +111,9 @@ const getProductById = async (req, res) => {
     }
 
     if (!product.isPublished && (!req.user || req.user.role !== "admin")) {
-      return res.status(403).json({ status: "fail", message: "Access denied" });
+      return res
+        .status(403)
+        .json({ status: "fail", message: "Access denied to this product" });
     }
 
     res.status(200).json({ status: "success", data: { product } });
@@ -108,41 +127,17 @@ const getProductById = async (req, res) => {
 
 const updateProduct = async (req, res) => {
   try {
-    const allowedUpdates = [
-      "name",
-      "description",
-      "price",
-      "category",
-      "images",
-      "tags",
-      "dimensions",
-      "weight",
-      "isPublished",
-    ];
-    const updates = {};
-    Object.keys(req.body).forEach((key) => {
-      if (allowedUpdates.includes(key)) {
-        updates[key] = req.body[key];
-      }
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
     });
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      { $set: updates },
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+
     if (!product) {
-      return res.status(404).json({
-        status: "fail",
-        message: "Product not found",
-      });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Product not found" });
     }
-    res.status(200).json({
-      status: "success",
-      data: { product },
-    });
+    res.status(200).json({ status: "success", data: { product } });
   } catch (err) {
     res.status(500).json({
       status: "fail",
@@ -159,8 +154,7 @@ const deleteProduct = async (req, res) => {
         .status(404)
         .json({ status: "fail", message: "Product not found" });
     }
-
-    res.status(200).json({ status: "success", message: "Product deleted" });
+    res.status(204).send();
   } catch (err) {
     res.status(500).json({
       status: "fail",
@@ -176,10 +170,6 @@ const getSimilarProducts = async (req, res) => {
       return res
         .status(404)
         .json({ status: "fail", message: "Product not found" });
-    }
-
-    if (!product.isPublished && (!req.user || req.user.role !== "admin")) {
-      return res.status(403).json({ status: "fail", message: "Access denied" });
     }
 
     const similarProducts = await Product.find({
@@ -199,18 +189,17 @@ const getSimilarProducts = async (req, res) => {
 
 const getBestSellerProduct = async (req, res) => {
   try {
-    console.log("Fetching best-seller product");
-    const bestSeller = await Product.findOne({ isPublished: true }).sort({
-      salesCount: -1,
-    });
+    const bestSellers = await Product.find({ isPublished: true })
+      .sort({ salesCount: -1 })
+      .limit(5);
 
-    if (!bestSeller) {
+    if (!bestSellers || bestSellers.length === 0) {
       return res
         .status(404)
         .json({ status: "fail", message: "No products found" });
     }
 
-    res.status(200).json({ status: "success", data: { bestSeller } });
+    res.status(200).json({ status: "success", data: { bestSellers } });
   } catch (err) {
     res.status(500).json({
       status: "fail",
