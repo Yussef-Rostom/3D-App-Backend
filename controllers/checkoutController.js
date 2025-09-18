@@ -46,8 +46,13 @@ const createCheckout = async (req, res) => {
     });
 
     await checkout.save();
-    res.status(201).json({ status: "success", data: checkout });
+
+    await Cart.findOneAndDelete({ user: userId });
+    populatedCheckout = await checkout.populate("items.product", "name price images");
+    
+    res.status(201).json({ status: "success", data: populatedCheckout });
   } catch (err) {
+    console.log(err.message);
     res.status(500).json({
       status: "fail",
       message: err.message || "Internal server error",
@@ -60,7 +65,7 @@ const getUserCheckouts = async (req, res) => {
     const userId = req.user._id;
     const checkouts = await Checkout.find({ user: userId }).populate(
       "items.product",
-      "name price"
+      "name price images"
     );
     res.status(200).json({ status: "success", data: checkouts });
   } catch (err) {
@@ -79,7 +84,7 @@ const getCheckoutById = async (req, res) => {
     const checkout = await Checkout.findOne({
       _id: checkoutId,
       user: userId,
-    }).populate("items.product", "name price");
+    }).populate("items.product", "name price images");
 
     if (!checkout) {
       return res
@@ -187,11 +192,9 @@ const failPayment = async (req, res) => {
     }
 
     if (checkout.status === "canceled") {
-      return res
-        .status(200)
-        .json({
-          message: "Webhook for an already canceled checkout. Acknowledged.",
-        });
+      return res.status(200).json({
+        message: "Webhook for an already canceled checkout. Acknowledged.",
+      });
     }
 
     checkout.status = "canceled";

@@ -40,11 +40,10 @@ const updateOrderStatus = async (req, res) => {
       updateData.deliveredAt = new Date();
     }
 
-    const order = await Order.findByIdAndUpdate(
-      orderId,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    const order = await Order.findByIdAndUpdate(orderId, updateData, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!order) {
       return res
@@ -52,7 +51,10 @@ const updateOrderStatus = async (req, res) => {
         .json({ status: "fail", message: "Order not found" });
     }
 
-    res.status(200).json({ status: "success", data: order });
+    populatedOrder = await order.populate("user", "name email");
+    populatedOrder = await populatedOrder.populate("items.product", "name");
+
+    res.status(200).json({ status: "success", data: populatedOrder });
   } catch (err) {
     res.status(500).json({ status: "fail", message: err.message });
   }

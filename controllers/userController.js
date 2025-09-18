@@ -42,15 +42,16 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
+
     if (!user) {
       return res
-        .status(401)
+        .status(400)
         .json({ status: "fail", message: "Invalid email or password" });
     }
     let isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res
-        .status(401)
+        .status(400)
         .json({ status: "fail", message: "Invalid email or password" });
     }
     const accessToken = generateToken(user, "15m");
@@ -107,6 +108,7 @@ const refreshToken = async (req, res) => {
       },
     });
   } catch (err) {
+    console.error(err.message);
     res
       .status(401)
       .json({ status: "fail", message: "Invalid or expired refresh token" });

@@ -1,80 +1,53 @@
 const Product = require("../models/Product");
+const { validationResult } = require("express-validator");
 
-class APIFeatures {
-  constructor(query, queryString) {
-    this.query = query;
-    this.queryString = queryString;
-  }
-
-  filter() {
-    let queryObj = { ...this.queryString };
-    const excludedFields = ["page", "sort", "limit", "search"];
-    excludedFields.forEach((el) => delete queryObj[el]);
-
-    if (!this.queryString.user || this.queryString.user.role !== "admin") {
-      queryObj.isPublished = true;
+const getAllProducts = async (req, res) => {
+  try {
+    const filter = {};
+    if (!req.user || req.user.role !== "admin") {
+      filter.isPublished = true;
     }
-
-    if (this.queryString.search) {
-      queryObj.$or = [
-        { name: { $regex: this.queryString.search, $options: "i" } },
-        { description: { $regex: this.queryString.search, $options: "i" } },
-        { tags: { $regex: this.queryString.search, $options: "i" } },
+    if (req.query.category) {
+      filter.category = req.query.category;
+    }
+    if (req.query.search) {
+      filter.$or = [
+        { name: { $regex: req.query.search, $options: "i" } },
+        { description: { $regex: req.query.search, $options: "i" } },
+        { tags: { $regex: req.query.search, $options: "i" } },
       ];
     }
 
-    this.query = this.query.find(queryObj);
-    return this;
-  }
+    const totalProducts = await Product.countDocuments(filter);
 
-  sort() {
-    if (this.queryString.sortBy) {
+    let query = Product.find(filter);
+
+    if (req.query.sortBy) {
       const sortByMap = {
         priceAsc: { price: 1 },
         priceDesc: { price: -1 },
         newest: { createdAt: -1 },
         popularity: { salesCount: -1 },
       };
-      this.query = this.query.sort(
-        sortByMap[this.queryString.sortBy] || { createdAt: -1 }
-      );
+      query = query.sort(sortByMap[req.query.sortBy] || { createdAt: -1 });
     } else {
-      this.query = this.query.sort({ createdAt: -1 });
+      query = query.sort({ createdAt: -1 });
     }
-    return this;
-  }
 
-  paginate() {
-    const page = this.queryString.page * 1 || 1;
-    const limit = this.queryString.limit * 1 || 0;
+    const page = req.query.page * 1 || 1;
+    const limit = req.query.limit * 1 || 10;
     const skip = (page - 1) * limit;
+    query = query.skip(skip).limit(limit);
 
-    this.query = this.query.skip(skip).limit(limit);
-    return this;
-  }
-}
-
-const getAllProducts = async (req, res) => {
-  try {
-    const features = new APIFeatures(Product.find(), {
-      ...req.query,
-      user: req.user,
-    })
-      .filter()
-      .sort()
-      .paginate();
-
-    const products = await features.query;
-
-    const totalProducts = await Product.countDocuments(
-      features.query.getFilter()
-    );
+    const products = await query;
 
     res.status(200).json({
       status: "success",
-      results: products.length,
-      totalPages: Math.ceil(totalProducts / (req.query.limit * 1 || 10)),
-      data: { products },
+      data: {
+        results: products.length,
+        totalPages: Math.ceil(totalProducts / limit),
+        products,
+      },
     });
   } catch (err) {
     res.status(500).json({

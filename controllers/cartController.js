@@ -17,22 +17,15 @@ const getCart = async (req, res) => {
 
     if (!userId && !gestId) {
       return res
-        .status(200)
-        .json({ status: "success", data: { items: [], totalPrice: 0 } });
+        .status(401)
+        .json({ status: "fail", message: "User ID or Guest ID is required" });
     }
 
     const query = userId ? { user: userId } : { gestId };
     let cart = await Cart.findOne(query).populate("items.product");
 
     if (!cart) {
-      const newCartData = { items: [], totalPrice: 0 };
-      if (userId) newCartData.user = userId;
-      if (gestId) newCartData.gestId = gestId;
-
-      const newCart = new Cart(newCartData);
-      await newCart.save();
-
-      return res.status(200).json({ status: "success", data: newCart });
+      return res.status(200).json({ status: "success", data: {} });
     }
 
     res.status(200).json({ status: "success", data: cart });
@@ -52,7 +45,7 @@ const addToCart = async (req, res) => {
 
     if (!userId && !gestId) {
       return res
-        .status(400)
+        .status(401)
         .json({ status: "fail", message: "User ID or Guest ID is required" });
     }
 
@@ -117,7 +110,7 @@ const updateCartItemQuantity = async (req, res) => {
 
     if (!userId && !gestId) {
       return res
-        .status(400)
+        .status(401)
         .json({ status: "fail", message: "User ID or Guest ID is required" });
     }
 
@@ -178,7 +171,7 @@ const deleteCartItem = async (req, res) => {
 
     if (!userId && !gestId) {
       return res
-        .status(400)
+        .status(401)
         .json({ status: "fail", message: "User ID or Guest ID is required" });
     }
 
@@ -227,20 +220,25 @@ const mergeCarts = async (req, res) => {
     const userId = req.user.id;
     const gestId = req.headers["gest-id"] || null;
 
-    if (!userId || !gestId) {
+    if (!userId && !gestId) {
       return res
-        .status(400)
-        .json({ status: "fail", message: "User ID and Guest ID are required" });
+        .status(401)
+        .json({ status: "fail", message: "User ID or Guest ID is required" });
     }
 
     let userCart = await Cart.findOne({ user: userId });
     const guestCart = await Cart.findOne({ gestId });
 
     if (!guestCart) {
+      if (!userCart) {
+        userCart = new Cart();
+      }
+      await userCart.save();
+      const populatedCart = await userCart.populate("items.product");
       return res.status(200).json({
         status: "success",
         message: "No guest cart to merge",
-        data: userCart,
+        data: populatedCart,
       });
     }
 
@@ -248,7 +246,8 @@ const mergeCarts = async (req, res) => {
       guestCart.user = userId;
       guestCart.gestId = undefined;
       await guestCart.save();
-      return res.status(200).json({ status: "success", data: guestCart });
+      const populatedCart = await guestCart.populate("items.product");
+      return res.status(200).json({ status: "success", data: populatedCart });
     }
 
     for (const guestItem of guestCart.items) {

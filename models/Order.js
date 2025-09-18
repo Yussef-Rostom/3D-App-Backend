@@ -51,11 +51,14 @@ const orderSchema = new mongoose.Schema(
         required: [true, "Phone number is required"],
         validate: {
           validator: function (v) {
-            const cleaned = v.replace(/\D/g, "");
+            let cleaned = v.replace(/\D/g, "");
+            if (cleaned.startsWith("20")) {
+              cleaned = cleaned.substring(2);
+              cleaned = "0" + cleaned;
+            }
             return /^(010|011|012|015)\d{8}$/.test(cleaned);
           },
-          message:
-            "Phone number must be 11 digits and start with 010, 011, 012, or 015",
+          message: "Please provide a valid 11-digit Egyptian phone number.",
         },
       },
       postalCode: { type: String, required: [true, "postalCode is required"] },

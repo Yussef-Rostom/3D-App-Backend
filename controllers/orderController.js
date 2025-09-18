@@ -5,7 +5,7 @@ const getUserOrders = async (req, res) => {
     const userId = req.user._id;
     const orders = await Order.find({ user: userId }).populate(
       "items.product",
-      "name price"
+      "name price images"
     );
     res.status(200).json({ status: "success", data: orders });
   } catch (err) {
@@ -18,7 +18,7 @@ const getOrderById = async (req, res) => {
     const orderId = req.params.orderId;
     const order = await Order.findById(orderId)
       .populate("user", "name email")
-      .populate("items.product", "name price");
+      .populate("items.product", "name price images");
     if (!order) {
       return res
         .status(404)
