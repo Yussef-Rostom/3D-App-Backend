@@ -65,13 +65,16 @@ const checkoutSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "completed", "canceled"],
-      default: "pending",
+      enum: ["wait_payment", "pending_payment", "completed", "canceled"],
+      default: "wait_payment",
     },
     paymentStatus: {
       type: String,
       enum: ["pending", "paid", "failed"],
       default: "pending",
+    },
+    paymentDetails: {
+      type: mongoose.Schema.Types.Mixed,
     },
     isFinalized: {
       type: Boolean,

@@ -8,9 +8,6 @@ router
   .post(protect, checkoutController.createCheckout)
   .get(protect, checkoutController.getUserCheckouts);
 
-router.post("/payment/success", checkoutController.successPayment);
-router.post("/payment/fail", checkoutController.failPayment);
-
 router.get("/:id", protect, checkoutController.getCheckoutById);
 
 module.exports = router;

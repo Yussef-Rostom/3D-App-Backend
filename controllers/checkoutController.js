@@ -1,8 +1,6 @@
 const Checkout = require("../models/Checkout");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
-const Order = require("../models/Order");
-const validateFawaterkWebhook = require("../middlewares/validateFawaterkWebhook");
 
 const createCheckout = async (req, res) => {
   try {
@@ -48,8 +46,11 @@ const createCheckout = async (req, res) => {
     await checkout.save();
 
     await Cart.findOneAndDelete({ user: userId });
-    populatedCheckout = await checkout.populate("items.product", "name price images");
-    
+    populatedCheckout = await checkout.populate(
+      "items.product",
+      "name price images"
+    );
+
     res.status(201).json({ status: "success", data: populatedCheckout });
   } catch (err) {
     console.log(err.message);
@@ -63,10 +64,13 @@ const createCheckout = async (req, res) => {
 const getUserCheckouts = async (req, res) => {
   try {
     const userId = req.user._id;
-    const checkouts = await Checkout.find({ user: userId }).populate(
-      "items.product",
-      "name price images"
-    );
+    const checkouts = await Checkout.find({
+      user: userId,
+      status: { $in: ["wait_payment", "pending_payment"] },
+    })
+      .sort({ createdAt: -1 })
+      .populate("items.product", "name price images");
+
     res.status(200).json({ status: "success", data: checkouts });
   } catch (err) {
     res.status(500).json({
@@ -101,118 +105,8 @@ const getCheckoutById = async (req, res) => {
   }
 };
 
-const successPayment = async (req, res) => {
-  const body = req.body;
-
-  const isValid = validateFawaterkWebhook(body, "paid");
-  if (!isValid) {
-    return res
-      .status(400)
-      .json({ status: "fail", message: "Invalid hash key. Webhook rejected." });
-  }
-
-  try {
-    const checkoutId = body.pay_load?.checkoutId;
-    if (!checkoutId) {
-      return res
-        .status(400)
-        .json({ status: "fail", message: "checkoutId not found in payload." });
-    }
-
-    const checkout = await Checkout.findById(checkoutId);
-
-    if (!checkout) {
-      console.warn(
-        `Webhook received for non-existent checkoutId: ${checkoutId}`
-      );
-      return res
-        .status(200)
-        .json({ message: "Webhook acknowledged, but checkout not found." });
-    }
-
-    if (checkout.status === "completed") {
-      return res.status(200).json({
-        message: "Webhook for an already completed checkout. Acknowledged.",
-      });
-    }
-
-    checkout.status = "completed";
-    checkout.paymentStatus = "paid";
-    checkout.isFinalized = true;
-    checkout.FinalizedAt = new Date();
-    await checkout.save();
-
-    const order = new Order({
-      user: checkout.user,
-      items: checkout.items,
-      totalPrice: checkout.totalPrice,
-      shippingAddress: checkout.shippingAddress,
-      paymentDetails: {
-        method: body.payment_method,
-        invoiceId: body.invoice_id,
-        referenceNumber: body.referenceNumber,
-      },
-      status: "processing",
-    });
-
-    await order.save();
-  } catch (error) {
-    console.error("Error processing successful payment webhook:", error);
-  }
-  res.status(200).json({ message: "Webhook received successfully." });
-};
-
-const failPayment = async (req, res) => {
-  const body = req.body;
-
-  const isValid = validateFawaterkWebhook(body, "expired");
-  if (!isValid) {
-    return res
-      .status(400)
-      .json({ status: "fail", message: "Invalid hash key. Webhook rejected." });
-  }
-
-  try {
-    const checkoutId = body.pay_load?.checkoutId;
-    if (!checkoutId) {
-      return res
-        .status(400)
-        .json({ status: "fail", message: "checkoutId not found in payload." });
-    }
-
-    const checkout = await Checkout.findById(checkoutId);
-
-    if (!checkout) {
-      console.warn(
-        `Webhook received for non-existent checkoutId: ${checkoutId}`
-      );
-      return res
-        .status(200)
-        .json({ message: "Webhook acknowledged, but checkout not found." });
-    }
-
-    if (checkout.status === "canceled") {
-      return res.status(200).json({
-        message: "Webhook for an already canceled checkout. Acknowledged.",
-      });
-    }
-
-    checkout.status = "canceled";
-    checkout.paymentStatus = "failed";
-    checkout.isFinalized = true;
-    checkout.FinalizedAt = new Date();
-    await checkout.save();
-  } catch (error) {
-    console.error("Error processing failed payment webhook:", error);
-  }
-
-  res.status(200).json({ message: "Webhook received successfully." });
-};
-
 module.exports = {
   createCheckout,
   getUserCheckouts,
   getCheckoutById,
-  successPayment,
-  failPayment,
 };
